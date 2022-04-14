@@ -1,0 +1,13 @@
+cluster {
+    leader node (single for now)
+    follower node list
+}
+
+user queries cluster to inc(key, val)
+- we write through leader node 
+- leader appends inc op to block
+
+
+
+
+user queries cluster to get(key)
