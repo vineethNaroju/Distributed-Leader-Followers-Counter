@@ -1,6 +1,12 @@
 package main
 
-import "sync"
+import (
+	"fmt"
+	"log"
+	"math/rand"
+	"sync"
+	"time"
+)
 
 type Cluster struct {
 	timer         *Timer
@@ -21,10 +27,10 @@ func NewCluster(followerNodeCount int) *Cluster {
 		clusterMutex: &sync.Mutex{},
 	}
 
-	cluster.leaderNode = NewNode(true, cluster.timer, nil)
+	cluster.leaderNode = NewNode("leader", true, cluster.timer, nil, -1)
 
-	for i := 0; i < followerNodeCount; i++ {
-		cluster.followerNodes = append(cluster.followerNodes, NewNode(false, cluster.timer, cluster.leaderNode))
+	for i := 1; i <= followerNodeCount; i++ {
+		cluster.followerNodes = append(cluster.followerNodes, NewNode(fmt.Sprint("follower-", i), false, cluster.timer, cluster.leaderNode, 5*i))
 	}
 
 	return cluster
@@ -34,9 +40,29 @@ func (cluster *Cluster) Get(key string) int {
 
 	// get from a bunch of follower nodes and decide based on timestamp i guess
 
+	idx := rand.Intn(len(cluster.followerNodes))
+
+	readNode := cluster.followerNodes[idx]
+
+	return cluster.getFromNode(readNode, key)
+
+}
+
+func (cluster *Cluster) getFromNode(readNode *Node, key string) int {
+	data := readNode.Get(key)
+
+	if data != nil {
+		fmt.Println(time.Now(), "GET", key, "responded by", readNode.name, "val:", data.value, "createdOn:", data.createdOn)
+		return data.value
+	}
+
+	fmt.Println(time.Now(), "GET", key, "responded by", readNode.name, "didn't contain key.")
+
 	return 0
 }
 
 func (cluster *Cluster) Inc(key string, val int) {
-
+	if err := cluster.leaderNode.Inc(key, val); err != nil {
+		log.Fatalf(err.Error())
+	}
 }

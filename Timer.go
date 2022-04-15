@@ -2,7 +2,6 @@ package main
 
 import (
 	"sync"
-	"time"
 )
 
 type Timer struct {
@@ -12,30 +11,17 @@ type Timer struct {
 
 func NewTimer() *Timer {
 	timer := &Timer{
-		count:      0,
+		count:      -1,
 		countMutex: &sync.Mutex{},
 	}
 
-	timer.daemon()
-
 	return timer
-}
-
-func (timer *Timer) daemon() {
-	go func() {
-		for {
-			time.Sleep(1 * time.Millisecond)
-
-			timer.countMutex.Lock()
-			timer.count++
-			timer.countMutex.Unlock()
-		}
-	}()
 }
 
 func (timer *Timer) Get() int {
 	timer.countMutex.Lock()
 	defer timer.countMutex.Unlock()
+	timer.count++
 
 	return timer.count
 }

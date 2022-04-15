@@ -7,6 +7,9 @@ import (
 )
 
 type Node struct {
+	name                    string
+	syncPeriodInMillisecond time.Duration
+
 	isLeader bool
 	timer    *Timer
 	leader   *Node
@@ -23,9 +26,10 @@ type Node struct {
 	storeMutex *sync.Mutex
 }
 
-func NewNode(isLeader bool, timer *Timer, leader *Node) *Node {
+func NewNode(name string, isLeader bool, timer *Timer, leader *Node, syncPeriodInMillisecond int) *Node {
 
 	node := &Node{
+		name:         name,
 		isLeader:     isLeader,
 		timer:        timer,
 		leader:       leader,
@@ -41,9 +45,12 @@ func NewNode(isLeader bool, timer *Timer, leader *Node) *Node {
 		node.leaderDaemon()
 	} else {
 		node.stateIncListSize = 0
+		node.syncPeriodInMillisecond = time.Duration(syncPeriodInMillisecond) * time.Millisecond
 		node.stateResponseChannel = make(chan *StateQueryResponse)
 		node.followerDaemon()
 	}
+
+	fmt.Println(time.Now(), "created node", node.name, "with sync time in", syncPeriodInMillisecond, "ms")
 
 	return node
 }
@@ -90,9 +97,9 @@ func (node *Node) leaderLogIngressDaemon() {
 	go func() {
 		for {
 			op := <-node.logChannel
-
 			node.incListMutex.Lock()
 			node.incList = append(node.incList, op)
+			fmt.Println(time.Now(), "leader incList appended by key:", op.key, "value:", op.data.value, "createdOn:", op.data.createdOn)
 			node.incListMutex.Unlock()
 		}
 	}()
@@ -102,26 +109,28 @@ func (node *Node) leaderStateQueryIngressDaemon() {
 	go func() {
 		for {
 			query := <-node.stateQueryChannel
-			response := NewStateQueryResponse(false, []*Incop{})
+
+			// fmt.Println(time.Now(), "leader got state query by", query.replicaNode.name, " with replicaIncListSize", query.replicaIncListSize, "and recordFetchCount", query.recordFetchCount)
+
+			response := NewStateQueryResponse([]*Incop{})
 
 			node.incListMutex.Lock()
 
-			if len(node.incList) <= query.replicaIncListSize {
-				response.end = true
-			} else {
+			if len(node.incList) > query.replicaIncListSize {
 
 				i := query.replicaIncListSize
 
 				for query.recordFetchCount > 0 && i < len(node.incList) {
 					response.incList = append(response.incList, node.incList[i])
 					i++
+					query.recordFetchCount--
 				}
 
-				if query.replicaIncListSize+query.recordFetchCount < len(node.incList) {
-					response.end = false
-				} else {
-					response.end = true
-				}
+				// if query.replicaIncListSize+query.recordFetchCount < len(node.incList) {
+				// 	response.end = false
+				// } else {
+				// 	response.end = true
+				// }
 			}
 
 			node.incListMutex.Unlock()
@@ -139,8 +148,34 @@ func (node *Node) leaderDaemon() {
 func (node *Node) followerStateSyncDaemon() {
 	go func() {
 		for {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(node.syncPeriodInMillisecond)
 
+			node.leader.stateQueryChannel <- *NewStateQuery(node, node.stateIncListSize, 2)
+
+			res := <-node.stateResponseChannel
+
+			if len(res.incList) == 0 {
+				continue
+			}
+
+			fmt.Println(time.Now(), node.name, "got state query response from leader as", res)
+
+			node.storeMutex.Lock()
+
+			for _, op := range res.incList {
+				if _, ok := node.store[op.key]; ok {
+					node.store[op.key].createdOn = op.data.createdOn
+					node.store[op.key].value += op.data.value
+				} else {
+					node.store[op.key] = op.data
+				}
+
+				fmt.Println(time.Now(), node.name, "updated store for key:", op.key, "as value:", node.store[op.key].value, "createdOn:", op.data.createdOn)
+			}
+
+			node.stateIncListSize += len(res.incList)
+
+			node.storeMutex.Unlock()
 		}
 	}()
 }
